@@ -1,0 +1,115 @@
+#+title: folgezett.el
+#+author: Lander Wells
+
+Luhmann-style folgezettel IDs for [[https://www.orgroam.com/][org-roam]].
+
+When you capture a new org-roam note, =folgezett= prompts you to choose a
+parent note.  It then generates a branching ID (e.g. =1.1=, =1.1a=, =1.1a2=)
+and stores it in the node's =FOLGEZETTEL_ID= property, mirroring the physical
+slip-box numbering described by [[https://writing.bobdoto.computer/how-to-use-folgezettel-in-your-zettelkasten-everything-you-need-to-know-to-get-started/][Niklas Luhmann]].
+
+* ID Scheme
+
+IDs alternate between numeric and alphabetic segments:
+
+#+begin_example
+1.1          (root)
+├── 1.1a
+│   ├── 1.1a1
+│   │   └── 1.1a1a …
+│   └── 1.1a2
+└── 1.1b
+2.1          (another root)
+#+end_example
+
+A digit-terminal parent (e.g. =1.1=) appends a letter for its first child
+(=1.1a=); a letter-terminal parent (e.g. =1.1a=) appends digits (=1.1a1=).
+Siblings are assigned sequentially: =a→b→c…= or =1→2→3…=.
+
+* Installation
+
+** straight.el / use-package
+
+#+begin_src emacs-lisp
+(use-package folgezett
+  :straight (:host github :repo "landerwells/folgezett.el")
+  :after org-roam
+  :config (folgezett-setup))
+#+end_src
+
+** Manual
+
+Clone or download =folgezett.el= and add it to your load path:
+
+#+begin_src emacs-lisp
+(add-to-list 'load-path "/path/to/folgezett.el/")
+(with-eval-after-load 'org-roam
+  (require 'folgezett)
+  (folgezett-setup))
+#+end_src
+
+* Quick Start
+
+1. Call =folgezett-setup= after org-roam loads (see above).
+2. Capture a new org-roam note as usual (=org-roam-capture=).
+3. A =Folgezettel parent:= prompt appears — pick a parent or choose
+   =[None — root-level note]= to start a new top-level thread.
+4. The =FOLGEZETTEL_ID= property is written to the note automatically.
+
+* Commands
+
+| Command                      | Description                                                         |
+|------------------------------+---------------------------------------------------------------------|
+| =folgezett-assign-id=        | Manually assign or reassign an ID to the note at point              |
+| =folgezett-reparent=         | Re-parent the current note (updates its ID only)                    |
+| =folgezett-reparent-subtree= | Re-parent and recursively update all descendant IDs                 |
+| =folgezett-goto-parent=      | Jump to the parent note                                             |
+| =folgezett-list-children=    | Pick and visit a direct child of the current note                   |
+| =folgezett-show-tree=        | Display the full folgezettel hierarchy in a dedicated buffer        |
+
+* Configuration
+
+All variables belong to the =folgezett= customization group
+(=M-x customize-group RET folgezett=).
+
+** =folgezett-capture-keys= (default: =nil=)
+
+By default every new org-roam capture triggers the parent prompt.  Set this
+to a list of template keys to restrict the hook to specific templates:
+
+#+begin_src emacs-lisp
+(setq folgezett-capture-keys '("z"))   ; only "zettel" template
+#+end_src
+
+** =folgezett-include-id-in-filename= (default: =nil=)
+
+When non-nil, the folgezettel ID is prepended to the file name on assignment:
+
+#+begin_src emacs-lisp
+(setq folgezett-include-id-in-filename t)
+;; => "1.1a2--my-note-title.org"
+#+end_src
+
+Run =M-x org-roam-db-sync= after enabling this on an existing vault to
+refresh the database with the new file names.
+
+** =folgezett-show-id-in-completions= (default: =t=)
+
+When non-nil (set by =folgezett-setup=), folgezettel IDs appear in the
+org-roam completing-read interface.  Disable if you prefer plain titles:
+
+#+begin_src emacs-lisp
+(setq folgezett-show-id-in-completions nil)
+#+end_src
+
+** =folgezett-id-property= (default: ="FOLGEZETTEL_ID"=)
+
+The org property used to store a note's folgezettel ID.
+
+** =folgezett-parent-property= (default: ="FOLGEZETTEL_PARENT_ID"=)
+
+The org property used to store the org-roam node ID of the parent note.
+
+* License
+
+GPL-3.0-or-later.  See [[file:LICENSE][LICENSE]].
