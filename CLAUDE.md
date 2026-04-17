@@ -40,6 +40,8 @@ The package is structured in layers from bottom to top:
 
 5. **Capture integration** (`folgezett--capture-hook` on `org-roam-capture-new-node-hook`) — hooks fire during capture setup, before the template is filled in, so the parent prompt appears immediately when a new node is opened.
 
+6. **DB integration** (`folgezett--db-insert-parent-links` as `:after` advice on `org-roam-db-update-file`) — when `folgezett-db-link-parent` is non-nil, injects the `FOLGEZETTEL_PARENT_ID` property as an `id` link into org-roam's `links` table during indexing, so parent-child relationships appear in backlinks and org-roam-ui without adding text to note files.
+
 ## ID Scheme
 
 IDs alternate between number and letter segments:
@@ -64,3 +66,4 @@ IDs alternate between number and letter segments:
 | `folgezett-capture-keys` | `nil` | Restrict hook to specific capture keys |
 | `folgezett-include-id-in-filename` | `nil` | Prepend ID to filename on assignment |
 | `folgezett-show-id-in-completions` | `t` | Show IDs in org-roam completing-read |
+| `folgezett-db-link-parent` | `nil` | Inject parent links into org-roam's DB |
