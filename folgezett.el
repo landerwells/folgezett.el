@@ -80,6 +80,13 @@ Takes effect when `folgezett-setup' or
   :type 'boolean
   :group 'folgezett)
 
+(defcustom folgezett-link-to-parent t
+  "When non-nil, insert an org-roam link to the parent after the property drawer.
+The link appears in the body of the note so that org-roam indexes it,
+making the relationship visible in backlinks and org-roam-ui."
+  :type 'boolean
+  :group 'folgezett)
+
 ;;;; ── ID Helpers ───────────────────────────────────────────────────────────
 
 (defun folgezett--ends-in-digit-p (id)
@@ -253,6 +260,50 @@ EXCLUDE-ID, if provided, is excluded from sibling counting (see
          (parent-id    (when parent-node (org-roam-node-id parent-node))))
     (cons new-fz-id parent-id)))
 
+(defun folgezett--body-insertion-point ()
+  "Return buffer position where body content should be inserted.
+For file-level nodes this is after the property drawer and any
+#+keyword lines.  For heading-level nodes it is after the heading's
+property drawer."
+  (save-excursion
+    (goto-char (point-min))
+    ;; Skip the property drawer if present.
+    (when (looking-at "[ \t]*:PROPERTIES:")
+      (re-search-forward "^[ \t]*:END:" nil t)
+      (forward-line 1))
+    ;; Skip #+keyword lines (e.g. #+title:, #+filetags:).
+    (while (looking-at "^#\\+")
+      (forward-line 1))
+    (point)))
+
+(defun folgezett--update-parent-link (parent-node-id)
+  "Insert or remove the folgezettel parent link for PARENT-NODE-ID.
+When PARENT-NODE-ID is nil the existing link line is deleted.  When
+non-nil an org-roam [[id:...]] link is placed in the body so that
+org-roam indexes it for backlinks and the graph."
+  (save-excursion
+    (let ((link-re "^Parent: \\[\\[id:[^]]+\\]\\[[^]]*\\]\\][ \t]*$")
+          (drawer-re (rx bol (* blank) ":FOLGEZETTEL_LINKS:" (* blank) "\n"
+                          (*? anything) "\n"
+                          (* blank) ":END:" (* blank) eol)))
+      ;; Remove any old-style :FOLGEZETTEL_LINKS: drawer.
+      (goto-char (point-min))
+      (when (re-search-forward drawer-re nil t)
+        (delete-region (match-beginning 0) (min (1+ (match-end 0)) (point-max))))
+      ;; Remove any existing parent link line.
+      (goto-char (point-min))
+      (when (re-search-forward link-re nil t)
+        (delete-region (match-beginning 0) (min (1+ (match-end 0)) (point-max))))
+      ;; Insert fresh link when a parent is given.
+      (when parent-node-id
+        (when-let ((parent-node (org-roam-node-from-id parent-node-id)))
+          (goto-char (folgezett--body-insertion-point))
+          ;; Ensure a blank line before the link for clean separation.
+          (unless (bolp) (insert "\n"))
+          (insert (format "Parent: [[id:%s][%s]]\n"
+                          parent-node-id
+                          (org-roam-node-title parent-node))))))))
+
 (defun folgezett--set-properties (fz-id parent-node-id)
   "Set FOLGEZETTEL_ID to FZ-ID and FOLGEZETTEL_PARENT_ID to PARENT-NODE-ID.
 When PARENT-NODE-ID is nil the parent property is removed.
@@ -261,7 +312,9 @@ Uses `save-excursion' so point is not moved."
     (org-set-property folgezett-id-property fz-id)
     (if parent-node-id
         (org-set-property folgezett-parent-property parent-node-id)
-      (org-delete-property folgezett-parent-property))))
+      (org-delete-property folgezett-parent-property)))
+  (when folgezett-link-to-parent
+    (folgezett--update-parent-link parent-node-id)))
 
 ;;;###autoload
 (defun folgezett-assign-id ()
@@ -281,6 +334,7 @@ the FOLGEZETTEL_ID (and optionally FOLGEZETTEL_PARENT_ID) property."
     (when folgezett-include-id-in-filename
       (folgezett--rename-file-with-id new-fz-id))
     (save-buffer)
+    (org-roam-db-update-file)
     (message "folgezett: assigned ID %s" new-fz-id)
     new-fz-id))
 
