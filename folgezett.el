@@ -1,4 +1,4 @@
-;;; folgezett.el --- Folgezettel IDs for org-roam -*- lexical-binding: t; -*-
+;f; folgezett.el --- Folgezettel IDs for org-roam -*- lexical-binding: t; -*-
 
 ;; Author: Lander Wells <landerwells@gmail.com>
 ;; Version: 0.1.0
@@ -401,6 +401,33 @@ leading prefix (the old ID of the re-parented note) is replaced."
 
 ;;;; ── Tree View ────────────────────────────────────────────────────────────
 
+(defvar folgezett-tree-mode-map
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map special-mode-map)
+    (define-key map (kbd "RET") #'folgezett-tree-visit-node)
+    map)
+  "Keymap for `folgezett-tree-mode'.")
+
+(define-derived-mode folgezett-tree-mode special-mode "Fz-Tree"
+  "Major mode for the *Folgezettel Tree* buffer.
+\\<folgezett-tree-mode-map>
+\\[folgezett-tree-visit-node] Visit the note on the current line."
+  :group 'folgezett)
+
+(with-eval-after-load 'evil
+  (evil-define-key* '(normal motion) folgezett-tree-mode-map
+    (kbd "RET") #'folgezett-tree-visit-node))
+
+(defun folgezett-tree-visit-node ()
+  "Visit the org-roam node on the current line and close the tree buffer."
+  (interactive)
+  (if-let ((node (get-text-property (line-beginning-position) 'folgezett-node)))
+      (let ((buf (current-buffer)))
+        (quit-window)
+        (kill-buffer buf)
+        (org-roam-node-visit node))
+    (user-error "No folgezettel node on this line")))
+
 ;;;###autoload
 (defun folgezett-show-tree ()
   "Display the full folgezettel hierarchy in a dedicated buffer."
@@ -418,14 +445,15 @@ leading prefix (the old ID of the re-parented note) is replaced."
             (let* ((fz-id (car entry))
                    (node  (cdr entry))
                    (depth (folgezett--id-depth fz-id))
-                   (pad   (make-string (* depth 2) ?\s)))
-              (insert (format "%s%-8s  %s\n"
-                              pad fz-id
-                              (org-roam-node-title node))))))
+                   (pad   (make-string (* depth 2) ?\s))
+                   (line  (format "%s%-8s  %s\n"
+                                  pad fz-id
+                                  (org-roam-node-title node))))
+              (insert (propertize line 'folgezett-node node)))))
         (insert "\n"))
-      (special-mode)
+      (folgezett-tree-mode)
       (goto-char (point-min))
-      (display-buffer (current-buffer)))))
+      (pop-to-buffer (current-buffer)))))
 
 ;;;; ── Completion Display ───────────────────────────────────────────────────
 
@@ -464,21 +492,14 @@ the graph reflect the folgezettel parent-child relationship."
 
 ;;;; ── Capture Hook ─────────────────────────────────────────────────────────
 
-(defvar folgezett--active-capture-key nil
-  "The key of the org-capture template currently being used.")
-
-(defun folgezett--record-capture-key ()
-  "Store the active capture template key before finalization."
-  (setq folgezett--active-capture-key
-        (plist-get org-capture-plist :key)))
-
 (defun folgezett--capture-hook ()
   "Hook for `org-roam-capture-new-node-hook'.
 Prompts for a parent and writes folgezettel properties to the new node.
 Skips the node if it already has a folgezettel ID, and respects
 `folgezett-capture-keys' when it is non-nil."
   (when (or (null folgezett-capture-keys)
-            (member folgezett--active-capture-key folgezett-capture-keys))
+            (member (plist-get org-capture-plist :key)
+                    folgezett-capture-keys))
     (let* ((node     (org-roam-node-at-point))
            (existing (when node
                        (cdr (assoc folgezett-id-property
@@ -500,15 +521,11 @@ Skips the node if it already has a folgezettel ID, and respects
   :lighter " Fz"
   (if folgezett-mode
       (progn
-        (add-hook 'org-capture-prepare-finalize-hook
-                  #'folgezett--record-capture-key)
         (add-hook 'org-roam-capture-new-node-hook
                   #'folgezett--capture-hook)
         (when folgezett-db-link-parent
           (advice-add 'org-roam-db-update-file :after
                       #'folgezett--db-insert-parent-links)))
-    (remove-hook 'org-capture-prepare-finalize-hook
-                 #'folgezett--record-capture-key)
     (remove-hook 'org-roam-capture-new-node-hook
                  #'folgezett--capture-hook)
     (advice-remove 'org-roam-db-update-file
