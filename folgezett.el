@@ -1,4 +1,4 @@
-;f; folgezett.el --- Folgezettel IDs for org-roam -*- lexical-binding: t; -*-
+;; folgezett.el --- Folgezettel IDs for org-roam -*- lexical-binding: t; -*-
 
 ;; Author: Lander Wells <landerwells@gmail.com>
 ;; Version: 0.1.0
