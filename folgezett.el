@@ -1,4 +1,4 @@
-;; folgezett.el --- Folgezettel IDs for org-roam -*- lexical-binding: t; -*-
+;;; folgezett.el --- Folgezettel IDs for org-roam -*- lexical-binding: t; -*-
 
 ;; Author: Lander Wells <landerwells@gmail.com>
 ;; Version: 0.1.0
@@ -43,6 +43,8 @@
 (require 'org-roam)
 (require 'org-roam-node)
 (require 'cl-lib)
+
+(declare-function evil-define-key* "evil-core" (state keymap key def &rest bindings))
 
 ;;;; ── Customization ────────────────────────────────────────────────────────
 
@@ -329,7 +331,7 @@ See `folgezett-reparent-subtree' to update descendants as well."
         #'string<))
 
 (defun folgezett--remap-descendants (old-prefix new-prefix)
-  "For every descendant whose ID starts with OLD-PREFIX, swap in NEW-PREFIX."
+  "Replace OLD-PREFIX with NEW-PREFIX on every descendant ID."
   (dolist (old-id (folgezett--descendants old-prefix))
     (when-let ((node (folgezett--node-by-fz-id old-id)))
       (let ((new-id (concat new-prefix (substring old-id (length old-prefix)))))
