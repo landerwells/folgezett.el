@@ -52,14 +52,20 @@
 ;;   folgezett-goto-parent        Jump to the parent note
 ;;   folgezett-list-children      Pick and jump to a direct child
 ;;   folgezett-show-tree          Display the full folgezettel tree
+;;
+;; Evil users: RET in the tree buffer is bound for Emacs state only.
+;; To use it in normal/motion state, add this to your configuration:
+;;
+;;   (with-eval-after-load 'folgezett
+;;     (with-eval-after-load 'evil
+;;       (evil-define-key* '(normal motion) folgezett-tree-mode-map
+;;         (kbd "RET") #'folgezett-tree-visit-node)))
 
 ;;; Code:
 
 (require 'org-roam)
 (require 'org-roam-node)
 (require 'cl-lib)
-
-(declare-function evil-define-key* "evil-core" (state keymap key def &rest bindings))
 
 ;;;; ── Customization ────────────────────────────────────────────────────────
 
@@ -430,10 +436,6 @@ leading prefix (the old ID of the re-parented note) is replaced."
 \\<folgezett-tree-mode-map>
 \\[folgezett-tree-visit-node] Visit the note on the current line."
   :group 'folgezett)
-
-(with-eval-after-load 'evil
-  (evil-define-key* '(normal motion) folgezett-tree-mode-map
-    (kbd "RET") #'folgezett-tree-visit-node))
 
 (defun folgezett-tree-visit-node ()
   "Visit the org-roam node on the current line and close the tree buffer."
