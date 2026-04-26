@@ -103,6 +103,17 @@ Takes effect when `folgezett-setup' or
   :type 'boolean
   :group 'folgezett)
 
+(defcustom folgezett-export-parent-label "Previous"
+  "Label prefix for the parent link injected during export.
+When non-nil, `org-export-before-processing-functions' inserts a
+line of the form \"LABEL: [[id:…][Title]]\" at the top of the
+note body (after any property drawer and #+keyword lines, before
+the first content), so ox-hugo and other backends render a parent
+backlink without the link being stored on disk.  Set to nil to
+disable."
+  :type '(choice (const :tag "Disabled" nil) string)
+  :group 'folgezett)
+
 (defcustom folgezett-db-link-parent nil
   "When non-nil, inject parent links into org-roam's database.
 This advises `org-roam-db-update-file' so that the FOLGEZETTEL_PARENT_ID
@@ -509,6 +520,36 @@ the graph reflect the folgezettel parent-child relationship."
                    (list :outline (ignore-errors
                                     (org-get-outline-path 'with-self 'use-cache))))))))))
 
+;;;; ── Export Integration ───────────────────────────────────────────────────
+
+(defun folgezett--export-inject-parent (_backend)
+  "Inject a \"Previous: …\" line into the export buffer before parsing.
+Meant for `org-export-before-processing-functions': Org runs this
+on a temporary copy of the buffer, so the inserted line does not
+modify the file on disk.  The line is placed after any top-level
+property drawer and #+keyword: lines, before the first body
+content.  Honours `folgezett-export-parent-label' — when nil, does
+nothing."
+  (when folgezett-export-parent-label
+    (org-with-wide-buffer
+     (goto-char (point-min))
+     (when (re-search-forward
+            (concat "^[ \t]*:" folgezett-parent-property ":[ \t]+\\(.+\\)$")
+            nil t)
+       (let* ((parent-id (string-trim (match-string-no-properties 1)))
+              (node (and (not (string-empty-p parent-id))
+                         (ignore-errors (org-roam-node-from-id parent-id))))
+              (title (and node (org-roam-node-title node))))
+         (when (and node title)
+           (goto-char (point-min))
+           (when (looking-at-p "[ \t]*:PROPERTIES:")
+             (re-search-forward "^[ \t]*:END:[ \t]*\n" nil t))
+           (while (looking-at "^\\(?:[ \t]*#\\+[^\n]*\\|[ \t]*\\)\n")
+             (goto-char (match-end 0)))
+           (insert (format "%s: [[id:%s][%s]]\n\n"
+                           folgezett-export-parent-label
+                           parent-id title))))))))
+
 ;;;; ── Capture Hook ─────────────────────────────────────────────────────────
 
 (defun folgezett--capture-hook ()
@@ -542,11 +583,15 @@ Skips the node if it already has a folgezettel ID, and respects
       (progn
         (add-hook 'org-roam-capture-new-node-hook
                   #'folgezett--capture-hook)
+        (add-hook 'org-export-before-processing-functions
+                  #'folgezett--export-inject-parent)
         (when folgezett-db-link-parent
           (advice-add 'org-roam-db-update-file :after
                       #'folgezett--db-insert-parent-links)))
     (remove-hook 'org-roam-capture-new-node-hook
                  #'folgezett--capture-hook)
+    (remove-hook 'org-export-before-processing-functions
+                 #'folgezett--export-inject-parent)
     (advice-remove 'org-roam-db-update-file
                    #'folgezett--db-insert-parent-links)))
 
