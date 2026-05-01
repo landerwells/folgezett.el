@@ -33,10 +33,15 @@
 ;;
 ;; ID structure (alternating number/letter segments):
 ;;
-;;   Root notes:         1.1, 2.1, 3.1, ...
-;;   Children of 1.1:    1.1a, 1.1b, 1.1c, ...
-;;   Children of 1.1a:   1.1a1, 1.1a2, 1.1a3, ...
-;;   Children of 1.1a1:  1.1a1a, 1.1a1b, ...
+;;   New chains:         1.1, 2.1, 3.1, ...
+;;   Same chain:         1.1, 1.2, 1.3, ...
+;;   Branches of 1.1:    1.1a, 1.1b, 1.1c, ...
+;;   Branches of 1.1a:   1.1a1, 1.1a2, 1.1a3, ...
+;;   Branches of 1.1a1:  1.1a1a, 1.1a1b, ...
+;;
+;; When picking an anchor note, you choose either to (b)ranch off it
+;; (the new note becomes its child, e.g. 1.1 → 1.1a) or to (c)ontinue
+;; its chain (the new note becomes its sibling, e.g. 1.1 → 1.2).
 ;;
 ;; Quick start:
 ;;
@@ -47,6 +52,7 @@
 ;; Commands:
 ;;
 ;;   folgezett-assign-id          Manually assign or reassign an ID
+;;   folgezett-remove-id          Remove the ID and parent properties
 ;;   folgezett-reparent           Re-parent current note (ID only)
 ;;   folgezett-reparent-subtree   Re-parent + recursively update descendants
 ;;   folgezett-goto-parent        Jump to the parent note
@@ -193,6 +199,46 @@ Number-terminal parents get a letter suffix; letter-terminal get a digit."
        (t (cl-incf pos))))
     (max 0 (- segments 2))))
 
+(defun folgezett--id-segments (id)
+  "Parse ID into a list of segments.
+Digit runs become integers; letter runs remain strings."
+  (let (segments
+        (pos 0)
+        (len (length id)))
+    (while (< pos len)
+      (cond
+       ((and (string-match "[0-9]+" id pos)
+             (= (match-beginning 0) pos))
+        (push (string-to-number (match-string 0 id)) segments)
+        (setq pos (match-end 0)))
+       ((and (string-match "[a-z]+" id pos)
+             (= (match-beginning 0) pos))
+        (push (match-string 0 id) segments)
+        (setq pos (match-end 0)))
+       (t (cl-incf pos))))
+    (nreverse segments)))
+
+(defun folgezett--id< (a b)
+  "Return non-nil if A sorts before B in natural folgezettel order.
+Numbers compare numerically (so 1.2 < 1.10) and letters lexically."
+  (let ((as (folgezett--id-segments a))
+        (bs (folgezett--id-segments b))
+        (result nil)
+        (decided nil))
+    (while (and as bs (not decided))
+      (let ((x (pop as))
+            (y (pop bs)))
+        (cond
+         ((and (numberp x) (numberp y))
+          (cond ((< x y) (setq result t decided t))
+                ((> x y) (setq decided t))))
+         ((and (stringp x) (stringp y))
+          (cond ((string< x y) (setq result t decided t))
+                ((string> x y) (setq decided t))))
+         ((numberp x) (setq result t decided t))
+         (t (setq decided t)))))
+    (if decided result (and (null as) (consp bs)))))
+
 ;;;; ── Database Access ──────────────────────────────────────────────────────
 
 (defun folgezett--all-nodes ()
@@ -259,43 +305,94 @@ re-parenting so the note's own current ID does not inflate the counter)."
           (format "%d.1" (1+ max-n)))
       "1.1")))
 
-;;;; ── Parent Selection UI ──────────────────────────────────────────────────
+(defun folgezett--next-sibling-id (fz-id &optional exclude-id)
+  "Return the next sibling ID for FZ-ID.
+For chain-root IDs (e.g. \"1.1\"), returns the next ID in the same chain
+(e.g. \"1.2\").  Otherwise returns the next sibling under FZ-ID's parent.
+EXCLUDE-ID, if provided, is omitted from sibling counting."
+  (cond
+   ((string-match "^\\([0-9]+\\)\\.[0-9]+$" fz-id)
+    (let* ((chain    (match-string 1 fz-id))
+           (re       (concat "^" (regexp-quote chain) "\\.[0-9]+$"))
+           (all      (folgezett--all-ids))
+           (siblings (cl-remove-if-not
+                      (lambda (id)
+                        (and (string-match-p re id)
+                             (not (equal id exclude-id))))
+                      all)))
+      (if siblings
+          (folgezett--increment-id (folgezett--max-id siblings))
+        (concat chain ".1"))))
+   (t
+    (let ((parent (folgezett--strip-last-segment fz-id)))
+      (unless parent
+        (user-error "Cannot determine parent of folgezettel ID: %s" fz-id))
+      (folgezett--next-child-id parent exclude-id)))))
 
-(defun folgezett--select-parent ()
-  "Prompt the user to select a parent note via `completing-read'.
-Returns the selected org-roam node, or nil when the user picks root."
+;;;; ── Placement Selection UI ───────────────────────────────────────────────
+
+(defun folgezett--select-place ()
+  "Prompt for the placement of a new folgezettel note.
+Returns one of:
+  (:root)              — start a new chain (e.g. 2.1 if chain 1 exists)
+  (:branch . NODE)     — add a new branch off NODE (NODE becomes parent)
+  (:continue . NODE)   — continue NODE's chain (new note is NODE's sibling)"
   (let* ((nodes-alist (folgezett--all-nodes))
-         (root-label  "[None — root-level note]")
+         (root-label  "[New chain — top-level note]")
          (candidates
           (cons (cons root-label nil)
                 (mapcar (lambda (entry)
-                          (cons (format "%-8s  %s"
+                          (cons (format "%-10s  %s"
                                         (car entry)
                                         (org-roam-node-title (cdr entry)))
                                 (cdr entry)))
                         (sort nodes-alist
                               (lambda (a b) (string< (car a) (car b)))))))
-         (choice (completing-read "Folgezettel parent: "
+         (choice (completing-read "Folgezettel anchor: "
                                   (mapcar #'car candidates)
-                                  nil t nil nil root-label)))
-    (cdr (assoc choice candidates))))
+                                  nil t nil nil root-label))
+         (node (cdr (assoc choice candidates))))
+    (if (null node)
+        (list :root)
+      (let* ((fz-id           (cdr (assoc folgezett-id-property
+                                          (org-roam-node-properties node))))
+             (branch-preview  (folgezett--next-child-id fz-id))
+             (sibling-preview (folgezett--next-sibling-id fz-id))
+             (key (read-char-choice
+                   (format "(b)ranch → %s    (c)ontinue chain → %s    "
+                           branch-preview sibling-preview)
+                   '(?b ?c))))
+        (cl-case key
+          (?b (cons :branch node))
+          (?c (cons :continue node)))))))
 
 ;;;; ── Core: Assign ID ──────────────────────────────────────────────────────
 
 (defun folgezett--prompt-for-id (&optional exclude-id)
-  "Prompt for a parent note and return (NEW-FZ-ID . PARENT-NODE-ID).
-PARENT-NODE-ID is nil when the user selects a root-level note.
-EXCLUDE-ID, if provided, is excluded from sibling counting (see
-`folgezett--next-child-id')."
-  (let* ((parent-node  (folgezett--select-parent))
-         (parent-fz-id (when parent-node
-                         (cdr (assoc folgezett-id-property
-                                     (org-roam-node-properties parent-node)))))
-         (new-fz-id    (if parent-fz-id
-                           (folgezett--next-child-id parent-fz-id exclude-id)
-                         (folgezett--next-root-id)))
-         (parent-id    (when parent-node (org-roam-node-id parent-node))))
-    (cons new-fz-id parent-id)))
+  "Prompt for placement and return (NEW-FZ-ID . PARENT-NODE-ID).
+PARENT-NODE-ID is the org-roam node ID to record as
+`folgezett-parent-property', or nil when the new note has no folgezettel
+parent.  Branching makes the anchor the parent; continuing a chain makes
+the new note a sibling of the anchor (so they share a parent).
+EXCLUDE-ID, if given, is omitted from sibling counting (used during
+re-parenting so the note's own current ID does not inflate the counter)."
+  (let* ((place  (folgezett--select-place))
+         (kind   (car place))
+         (anchor (cdr place)))
+    (pcase kind
+      (:root (cons (folgezett--next-root-id) nil))
+      (:branch
+       (let ((anchor-fz-id (cdr (assoc folgezett-id-property
+                                       (org-roam-node-properties anchor)))))
+         (cons (folgezett--next-child-id anchor-fz-id exclude-id)
+               (org-roam-node-id anchor))))
+      (:continue
+       (let* ((anchor-fz-id   (cdr (assoc folgezett-id-property
+                                          (org-roam-node-properties anchor))))
+              (parent-roam-id (cdr (assoc folgezett-parent-property
+                                          (org-roam-node-properties anchor)))))
+         (cons (folgezett--next-sibling-id anchor-fz-id exclude-id)
+               parent-roam-id))))))
 
 (defun folgezett--set-properties (fz-id parent-node-id)
   "Set FOLGEZETTEL_ID to FZ-ID and FOLGEZETTEL_PARENT_ID to PARENT-NODE-ID.
@@ -322,27 +419,80 @@ the FOLGEZETTEL_ID (and optionally FOLGEZETTEL_PARENT_ID) property."
          (new-fz-id (car id-pair))
          (parent-id (cdr id-pair)))
     (folgezett--set-properties new-fz-id parent-id)
+    (save-buffer)
     (when folgezett-include-id-in-filename
       (folgezett--rename-file-with-id new-fz-id))
-    (save-buffer)
     (org-roam-db-update-file)
     (message "folgezett: assigned ID %s" new-fz-id)
     new-fz-id))
 
+;;;###autoload
+(defun folgezett-remove-id ()
+  "Remove all folgezettel state from the org-roam node at point.
+Deletes the FOLGEZETTEL_ID and FOLGEZETTEL_PARENT_ID properties and,
+when `folgezett-include-id-in-filename' is non-nil, strips the
+leading ID from the buffer's filename."
+  (interactive)
+  (let* ((node (or (org-roam-node-at-point)
+                   (user-error "No org-roam node at point")))
+         (fz-id (cdr (assoc folgezett-id-property
+                            (org-roam-node-properties node)))))
+    (unless fz-id
+      (user-error "Note has no folgezettel ID"))
+    (save-excursion
+      (org-delete-property folgezett-id-property)
+      (org-delete-property folgezett-parent-property))
+    (when folgezett-include-id-in-filename
+      (folgezett--rename-file-without-id fz-id))
+    (save-buffer)
+    (org-roam-db-update-file)
+    (message "folgezett: removed ID %s" fz-id)))
+
 ;;;; ── File Renaming ────────────────────────────────────────────────────────
 
+(defun folgezett--sanitize-filename-component (s)
+  "Strip filesystem-hostile characters from S for use in a filename."
+  (replace-regexp-in-string "[/\\\\:\0]+" "-" s))
+
+(defun folgezett--buffer-title ()
+  "Return the current buffer's `#+title:' keyword value, or nil."
+  (let ((kw (cdr (assoc "TITLE" (org-collect-keywords '("title"))))))
+    (and kw (string-join kw " "))))
+
 (defun folgezett--rename-file-with-id (fz-id)
-  "Prepend FZ-ID to the filename of the current buffer.
-The caller should run `org-roam-db-sync' afterward."
+  "Rename the current buffer's file to \"FZ-ID Title.EXT\".
+Saves the buffer first so the on-disk content is consistent before
+`rename-file' triggers org-roam's autosync re-indexing."
+  (when-let* ((file  (buffer-file-name))
+              (dir   (file-name-directory file))
+              (title (or (folgezett--buffer-title)
+                         (when-let ((node (org-roam-node-at-point)))
+                           (org-roam-node-title node))))
+              ((not (string-empty-p title)))
+              (ext   (or (file-name-extension file t) ".org"))
+              (new-base (folgezett--sanitize-filename-component
+                         (concat fz-id " " title ext)))
+              (new-file (expand-file-name new-base dir)))
+    (unless (string= file new-file)
+      (when (buffer-modified-p) (save-buffer))
+      (rename-file file new-file 1)
+      (set-visited-file-name new-file t t)
+      (message "folgezett: renamed → %s"
+               (file-name-nondirectory new-file)))))
+
+(defun folgezett--rename-file-without-id (fz-id)
+  "Strip a leading \"FZ-ID \" prefix from the current buffer's filename."
   (when-let* ((file (buffer-file-name))
               (dir  (file-name-directory file))
-              (base (file-name-nondirectory file)))
-    (unless (string-prefix-p (concat fz-id "--") base)
-      (let ((new-file (expand-file-name (concat fz-id "--" base) dir)))
-        (rename-file file new-file 1)
-        (set-visited-file-name new-file t t)
-        (message "folgezett: renamed → %s (run org-roam-db-sync)"
-                 (file-name-nondirectory new-file))))))
+              (base (file-name-nondirectory file))
+              (prefix (concat fz-id " ")))
+    (when (string-prefix-p prefix base)
+      (let* ((new-base (substring base (length prefix)))
+             (new-file (expand-file-name new-base dir)))
+        (unless (string= file new-file)
+          (rename-file file new-file 1)
+          (set-visited-file-name new-file t t)
+          (message "folgezett: renamed → %s (run org-roam-db-sync)" new-base))))))
 
 ;;;; ── Re-parenting ─────────────────────────────────────────────────────────
 
@@ -458,28 +608,43 @@ leading prefix (the old ID of the re-parented note) is replaced."
         (org-roam-node-visit node))
     (user-error "No folgezettel node on this line")))
 
+(defun folgezett--tree-children (parent-id nodes-alist)
+  "Return entries in NODES-ALIST that are direct children of PARENT-ID.
+PARENT-ID nil returns chain roots (e.g. \"1.1\", \"2.1\")."
+  (sort
+   (cl-remove-if-not
+    (lambda (entry)
+      (let ((id (car entry)))
+        (if (null parent-id)
+            (string-match-p "^[0-9]+\\.[0-9]+$" id)
+          (folgezett--direct-child-p parent-id id))))
+    nodes-alist)
+   (lambda (a b) (folgezett--id< (car a) (car b)))))
+
+(defun folgezett--tree-render (parent-id depth nodes-alist)
+  "Insert children of PARENT-ID at DEPTH, recursively."
+  (dolist (entry (folgezett--tree-children parent-id nodes-alist))
+    (let* ((fz-id (car entry))
+           (node  (cdr entry))
+           (pad   (make-string (* depth 2) ?\s))
+           (title (or (org-roam-node-title node) ""))
+           (line  (format "%s%-8s  %s\n" pad fz-id title)))
+      (insert (propertize line 'folgezett-node node))
+      (folgezett--tree-render fz-id (1+ depth) nodes-alist))))
+
 ;;;###autoload
 (defun folgezett-show-tree ()
   "Display the full folgezettel hierarchy in a dedicated buffer."
   (interactive)
-  (let ((sorted (sort (folgezett--all-nodes)
-                      (lambda (a b) (string< (car a) (car b))))))
+  (let ((nodes-alist (folgezett--all-nodes)))
     (with-current-buffer (get-buffer-create "*Folgezettel Tree*")
       (let ((inhibit-read-only t))
         (erase-buffer)
         (insert "Folgezettel Tree\n")
         (insert (make-string 60 ?─) "\n\n")
-        (if (null sorted)
+        (if (null nodes-alist)
             (insert "  (no folgezettel notes found)\n")
-          (dolist (entry sorted)
-            (let* ((fz-id (car entry))
-                   (node  (cdr entry))
-                   (depth (folgezett--id-depth fz-id))
-                   (pad   (make-string (* depth 2) ?\s))
-                   (line  (format "%s%-8s  %s\n"
-                                  pad fz-id
-                                  (org-roam-node-title node))))
-              (insert (propertize line 'folgezett-node node)))))
+          (folgezett--tree-render nil 0 nodes-alist))
         (insert "\n"))
       (folgezett-tree-mode)
       (goto-char (point-min))
@@ -516,9 +681,7 @@ the graph reflect the folgezettel parent-child relationship."
         (when (and source (not (string-empty-p parent-id)))
           (org-roam-db-query
            [:insert :into links :values $v1]
-           (vector (point) source parent-id "id"
-                   (list :outline (ignore-errors
-                                    (org-get-outline-path 'with-self 'use-cache))))))))))
+           (vector (point) source parent-id "id" '(:outline nil))))))))
 
 ;;;; ── Export Integration ───────────────────────────────────────────────────
 

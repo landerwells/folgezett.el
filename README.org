@@ -75,6 +75,7 @@ Clone or download =folgezett.el= and add it to your load path:
 | Command                      | Description                                              |
 |------------------------------+----------------------------------------------------------|
 | =folgezett-assign-id=        | Assign or reassign an ID to the note at point            |
+| =folgezett-remove-id=        | Remove the ID and parent properties from the note         |
 | =folgezett-reparent=         | Re-parent the current note (updates its ID only)         |
 | =folgezett-reparent-subtree= | Re-parent and recursively update all descendant IDs      |
 | =folgezett-goto-parent=      | Jump to the parent note                                  |
