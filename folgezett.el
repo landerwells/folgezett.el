@@ -4,7 +4,7 @@
 
 ;; Author: Lander Wells <landerwells@gmail.com>
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "27.1") (org-roam "2.0.0"))
+;; Package-Requires: ((emacs "27.2") (org-roam "2.0.0"))
 ;; Keywords: outlines tools org-roam zettelkasten
 ;; Homepage: https://github.com/landerwells/folgezett.el
 ;; SPDX-License-Identifier: GPL-3.0-or-later
@@ -219,7 +219,7 @@ Digit runs become integers; letter runs remain strings."
     (nreverse segments)))
 
 (defun folgezett--id< (a b)
-  "Return non-nil if A sorts before B in natural folgezettel order.
+  "Return non-nil if A comes before B in natural folgezettel order.
 Numbers compare numerically (so 1.2 < 1.10) and letters lexically."
   (let ((as (folgezett--id-segments a))
         (bs (folgezett--id-segments b))
@@ -308,7 +308,7 @@ re-parenting so the note's own current ID does not inflate the counter)."
 (defun folgezett--next-sibling-id (fz-id &optional exclude-id)
   "Return the next sibling ID for FZ-ID.
 For chain-root IDs (e.g. \"1.1\"), returns the next ID in the same chain
-(e.g. \"1.2\").  Otherwise returns the next sibling under FZ-ID's parent.
+\(e.g. \"1.2\").  Otherwise returns the next sibling under FZ-ID's parent.
 EXCLUDE-ID, if provided, is omitted from sibling counting."
   (cond
    ((string-match "^\\([0-9]+\\)\\.[0-9]+$" fz-id)
@@ -397,8 +397,13 @@ re-parenting so the note's own current ID does not inflate the counter)."
 (defun folgezett--set-properties (fz-id parent-node-id)
   "Set FOLGEZETTEL_ID to FZ-ID and FOLGEZETTEL_PARENT_ID to PARENT-NODE-ID.
 When PARENT-NODE-ID is nil the parent property is removed.
-Uses `save-excursion' so point is not moved."
+Always writes to the org-roam node at point (file-level or heading)
+rather than wherever point happens to be, so the property drawer is
+not created in the body — which would shift `#+title:' out of where
+org-roam-db looks for it and blank the title in the cache."
   (save-excursion
+    (when-let ((node (org-roam-node-at-point)))
+      (goto-char (org-roam-node-point node)))
     (org-set-property folgezett-id-property fz-id)
     (if parent-node-id
         (org-set-property folgezett-parent-property parent-node-id)
@@ -622,7 +627,7 @@ PARENT-ID nil returns chain roots (e.g. \"1.1\", \"2.1\")."
    (lambda (a b) (folgezett--id< (car a) (car b)))))
 
 (defun folgezett--tree-render (parent-id depth nodes-alist)
-  "Insert children of PARENT-ID at DEPTH, recursively."
+  "Insert children of PARENT-ID at DEPTH, recursively, from NODES-ALIST."
   (dolist (entry (folgezett--tree-children parent-id nodes-alist))
     (let* ((fz-id (car entry))
            (node  (cdr entry))
@@ -731,7 +736,9 @@ Skips the node if it already has a folgezettel ID, and respects
         (let* ((id-pair   (folgezett--prompt-for-id))
                (new-fz-id (car id-pair))
                (parent-id (cdr id-pair)))
-          (folgezett--set-properties new-fz-id parent-id)
+          (save-excursion
+            (when node (goto-char (org-roam-node-point node)))
+            (folgezett--set-properties new-fz-id parent-id))
           (message "folgezett: assigned ID %s" new-fz-id))))))
 
 ;;;; ── Mode & Setup ─────────────────────────────────────────────────────────
