@@ -1,8 +1,10 @@
 #+title: folgezett.el
 
+[[https://melpa.org/#/folgezett][file:https://melpa.org/packages/folgezett-badge.svg]]
+
 Luhmann-style folgezettel IDs for [[https://www.orgroam.com/][org-roam]].
 
-When you capture a new org-roam note, =folgezett= prompts you to choose a parent note and generates a branching ID (e.g. =1.1=, =1.1a=, =1.1a2=). The ID is stored in the node's =FOLGEZETTEL_ID= property, mirroring the slip-box numbering system described by [[https://writing.bobdoto.computer/how-to-use-folgezettel-in-your-zettelkasten-everything-you-need-to-know-to-get-started/][Niklas Luhmann]].
+When you capture a new org-roam note, =folgezett= prompts you to choose where it belongs: start a new chain, branch from an existing note, or continue an existing chain. It generates a branching ID (e.g. =1.1=, =1.1a=, =1.1a2=) and stores it in the node's =FOLGEZETTEL_ID= property, mirroring the slip-box numbering system described by [[https://writing.bobdoto.computer/how-to-use-folgezettel-in-your-zettelkasten-everything-you-need-to-know-to-get-started/][Niklas Luhmann]].
 
 ** ID scheme
 
@@ -22,18 +24,42 @@ A digit-terminal parent (e.g. =1.1=) appends a letter for its first child (=1.1a
 
 ** Installation
 
-*** straight.el / use-package
+=folgezett= is available from [[https://melpa.org/#/folgezett][MELPA]].
+
+*** package.el
+
+Make sure MELPA is in =package-archives=, then install with =M-x package-install RET folgezett RET=.
+
+Configure it after =org-roam= loads:
+
+#+begin_src emacs-lisp
+(with-eval-after-load 'org-roam
+  (require 'folgezett)
+  (folgezett-setup))
+#+end_src
+
+*** use-package
+
+#+begin_src emacs-lisp
+(use-package folgezett
+  :after org-roam
+  :config
+  (folgezett-setup))
+#+end_src
+
+*** straight.el / Git checkout
+
+If you prefer installing directly from GitHub:
 
 #+begin_src emacs-lisp
 (use-package folgezett
   :straight (:host github :repo "landerwells/folgezett.el")
   :after org-roam
-  :config (folgezett-setup))
+  :config
+  (folgezett-setup))
 #+end_src
 
-*** Manual
-
-Clone or download =folgezett.el= and add it to your load path:
+For a manual checkout, clone or download =folgezett.el= and add it to your load path:
 
 #+begin_src emacs-lisp
 (add-to-list 'load-path "/path/to/folgezett.el/")
@@ -44,13 +70,22 @@ Clone or download =folgezett.el= and add it to your load path:
 
 *** Doom Emacs
 
+If installing from MELPA, add this to =packages.el=:
+
+#+begin_src emacs-lisp
+(package! folgezett)
+#+end_src
+
+Then configure it in =config.el=:
+
 #+begin_src emacs-lisp
 (use-package folgezett
-  :load-path "~/Developer/folgezett.el"
   :after org-roam
+  :init
+  (setq folgezett-capture-keys '("m")
+        folgezett-db-link-parent t
+        folgezett-include-id-in-filename t)
   :config
-  (setq folgezett-capture-keys '("m"))
-  (setq folgezett-db-link-parent t)
   (folgezett-setup))
 
 (map! :leader
@@ -65,10 +100,11 @@ Clone or download =folgezett.el= and add it to your load path:
 
 ** Quick start
 
-1. Call =folgezett-setup= after org-roam loads (see above).
-2. Capture a new org-roam note with =org-roam-capture=.
-3. Select a parent from the =Folgezettel parent:= prompt, or choose =[None — root-level note]= to start a new thread.
-4. The =FOLGEZETTEL_ID= property is written to the note automatically.
+1. Install =folgezett= from MELPA or GitHub.
+2. Call =folgezett-setup= after org-roam loads (see above).
+3. Capture a new org-roam note with =org-roam-capture=.
+4. Choose a new chain, branch from an existing note, or continue an existing chain.
+5. The =FOLGEZETTEL_ID= property is written to the note automatically. If =folgezett-include-id-in-filename= is non-nil, the captured file is renamed after capture finalization.
 
 ** Commands
 
@@ -88,7 +124,7 @@ All variables belong to the =folgezett= customization group (=M-x customize-grou
 
 *** =folgezett-capture-keys=
 
-Restrict the parent prompt to specific capture template keys. When =nil= (the default), every new org-roam capture triggers the prompt.
+Restrict the placement prompt to specific capture template keys. When =nil= (the default), every new org-roam capture triggers the prompt.
 
 #+begin_src emacs-lisp
 (setq folgezett-capture-keys '("z"))
@@ -104,10 +140,11 @@ When non-nil, parent-child relationships are injected into org-roam's database d
 
 *** =folgezett-include-id-in-filename=
 
-When non-nil, the folgezettel ID is prepended to the filename on assignment (e.g. =1.1a2--my-note-title.org=). Run =M-x org-roam-db-sync= afterward to update the database.
+When non-nil, the folgezettel ID is prepended to the filename on assignment and after new-node capture finalization (e.g. =1.1a2 My Note Title.org=). Set this before calling =folgezett-setup=.
 
 #+begin_src emacs-lisp
 (setq folgezett-include-id-in-filename t)
+(folgezett-setup)
 #+end_src
 
 *** =folgezett-show-id-in-completions=
@@ -116,6 +153,14 @@ When non-nil (the default), folgezettel IDs appear in the org-roam completion in
 
 #+begin_src emacs-lisp
 (setq folgezett-show-id-in-completions nil)
+#+end_src
+
+*** =folgezett-export-parent-label=
+
+Label used for the export-only parent backlink inserted by =org-export-before-processing-functions=. Default: ="Previous"=. Set to =nil= to disable export-time parent link injection.
+
+#+begin_src emacs-lisp
+(setq folgezett-export-parent-label nil)
 #+end_src
 
 *** =folgezett-id-property=

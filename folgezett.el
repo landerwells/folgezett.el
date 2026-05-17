@@ -1,8 +1,9 @@
 ;;; folgezett.el --- Folgezettel IDs for org-roam -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2025 Lander Wells
+;; Copyright (C) 2025-2026 Lander Wells
 
 ;; Author: Lander Wells <landerwells@gmail.com>
+;; Assisted by: Opus 4.7
 ;; Version: 0.1.0
 ;; Package-Requires: ((emacs "27.2") (org-roam "2.0.0"))
 ;; Keywords: outlines tools org-roam zettelkasten
@@ -26,9 +27,10 @@
 
 ;; folgezett.el implements the Luhmann folgezettel system for org-roam.
 ;;
-;; When a new org-roam note is captured, the user is prompted to choose a
-;; parent note.  A folgezettel ID is generated from the parent and stored in
-;; the FOLGEZETTEL_ID property.  The parent relationship is recorded in
+;; When a new org-roam note is captured, the user is prompted to choose where
+;; it belongs: a new chain, a branch off an existing note, or a continuation of
+;; an existing chain.  A folgezettel ID is generated and stored in the
+;; FOLGEZETTEL_ID property.  Branches and continuations record their parent in
 ;; FOLGEZETTEL_PARENT_ID.
 ;;
 ;; ID structure (alternating number/letter segments):
@@ -72,6 +74,7 @@
 (require 'org-roam)
 (require 'org-roam-node)
 (require 'cl-lib)
+(require 'subr-x)
 
 ;;;; ── Customization ────────────────────────────────────────────────────────
 
@@ -92,7 +95,8 @@
 
 (defcustom folgezett-include-id-in-filename nil
   "When non-nil, prepend the folgezettel ID to the note's filename.
-After renaming, run `org-roam-db-sync' to update the database."
+Capture renaming happens after finalization, once Org has expanded the
+capture template and the note title is available."
   :type 'boolean
   :group 'folgezett)
 
@@ -412,7 +416,7 @@ org-roam-db looks for it and blank the title in the cache."
 ;;;###autoload
 (defun folgezett-assign-id ()
   "Assign (or reassign) a folgezettel ID to the org-roam node at point.
-Prompts for a parent note, derives the next appropriate ID, and sets
+Prompts for a placement, derives the next appropriate ID, and sets
 the FOLGEZETTEL_ID (and optionally FOLGEZETTEL_PARENT_ID) property."
   (interactive)
   (unless (org-roam-node-at-point)
@@ -454,6 +458,20 @@ leading ID from the buffer's filename."
     (message "folgezett: removed ID %s" fz-id)))
 
 ;;;; ── File Renaming ────────────────────────────────────────────────────────
+
+(defun folgezett--buffer-fz-id ()
+  "Return the first folgezettel ID found in the current buffer, or nil."
+  (or (when-let ((node (org-roam-node-at-point)))
+        (cdr (assoc folgezett-id-property
+                    (org-roam-node-properties node))))
+      (save-excursion
+        (org-with-wide-buffer
+         (goto-char (point-min))
+         (when (re-search-forward
+                (concat "^[ \t]*:" (regexp-quote folgezett-id-property)
+                        ":[ \t]+\\(.+\\)$")
+                nil t)
+           (string-trim (match-string-no-properties 1)))))))
 
 (defun folgezett--sanitize-filename-component (s)
   "Strip filesystem-hostile characters from S for use in a filename."
@@ -497,7 +515,7 @@ Saves the buffer first so the on-disk content is consistent before
         (unless (string= file new-file)
           (rename-file file new-file 1)
           (set-visited-file-name new-file t t)
-          (message "folgezett: renamed → %s (run org-roam-db-sync)" new-base))))))
+          (message "folgezett: renamed → %s" new-base))))))
 
 ;;;; ── Re-parenting ─────────────────────────────────────────────────────────
 
@@ -720,9 +738,27 @@ nothing."
 
 ;;;; ── Capture Hook ─────────────────────────────────────────────────────────
 
+(defun folgezett--capture-finalize-hook ()
+  "Rename newly captured notes after Org has expanded the capture template.
+`org-roam-capture-new-node-hook' runs before the template body is fully
+inserted, so the final title/filename is not always available there.  This
+hook runs after finalization and can safely prepend the assigned ID to the
+file name when `folgezett-include-id-in-filename' is non-nil."
+  (when folgezett-include-id-in-filename
+    (when-let* ((marker (bound-and-true-p org-capture-last-stored-marker))
+                (buffer (marker-buffer marker))
+                ((buffer-live-p buffer)))
+      (with-current-buffer buffer
+        (save-excursion
+          (goto-char marker)
+          (when-let ((fz-id (folgezett--buffer-fz-id)))
+            (folgezett--rename-file-with-id fz-id)
+            (save-buffer)
+            (ignore-errors (org-roam-db-update-file))))))))
+
 (defun folgezett--capture-hook ()
   "Hook for `org-roam-capture-new-node-hook'.
-Prompts for a parent and writes folgezettel properties to the new node.
+Prompts for a placement and writes folgezettel properties to the new node.
 Skips the node if it already has a folgezettel ID, and respects
 `folgezett-capture-keys' when it is non-nil."
   (when (or (null folgezett-capture-keys)
@@ -753,6 +789,8 @@ Skips the node if it already has a folgezettel ID, and respects
       (progn
         (add-hook 'org-roam-capture-new-node-hook
                   #'folgezett--capture-hook)
+        (add-hook 'org-capture-after-finalize-hook
+                  #'folgezett--capture-finalize-hook)
         (add-hook 'org-export-before-processing-functions
                   #'folgezett--export-inject-parent)
         (when folgezett-db-link-parent
@@ -760,6 +798,8 @@ Skips the node if it already has a folgezettel ID, and respects
                       #'folgezett--db-insert-parent-links)))
     (remove-hook 'org-roam-capture-new-node-hook
                  #'folgezett--capture-hook)
+    (remove-hook 'org-capture-after-finalize-hook
+                 #'folgezett--capture-finalize-hook)
     (remove-hook 'org-export-before-processing-functions
                  #'folgezett--export-inject-parent)
     (advice-remove 'org-roam-db-update-file
